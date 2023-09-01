@@ -11,11 +11,8 @@ func main() {
 	liquidacao := time.Date(2023, time.August, 30, 0, 0, 0, 0, time.UTC)
 	vencimento := time.Date(2025, time.July, 1, 0, 0, 0, 0, time.UTC)
 
-	novoCalculo := calculadora.NovoCalculo(calculadora.NTN_F, vencimento, liquidacao)
+	novoCalculo := calculadora.NovoCalculo(calculadora.NTN_F, vencimento, liquidacao, 0.12625)
 
-	//	novoCalculo.PrecificarLTN()
-
-	//log.Println(novoCalculo.Preco)
 	log.Println(novoCalculo.Titulo.Cupom)
 
 	/* router := routes.NewRouter()
