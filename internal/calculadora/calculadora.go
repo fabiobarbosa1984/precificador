@@ -39,6 +39,7 @@ type fluxoPagamento struct {
 	valorPresente float64
 }
 
+// cria um novo cálculo, já invocando os métodos necessários para a definição do cupom, vna e fluxo de pagamento
 func NovoCalculo(tipo TipoTitulo, vencimento time.Time, liquidacao time.Time, taxa float64) Calculo {
 	nc := Calculo{
 		Titulo:         Titulo{Tipo: tipo, Vencimento: vencimento},
@@ -47,7 +48,7 @@ func NovoCalculo(tipo TipoTitulo, vencimento time.Time, liquidacao time.Time, ta
 	}
 
 	//define o valor do cupom com base no tipo de título
-	nc.definirCupom()
+	nc.definirParametros()
 
 	//pre calcula a quantidade de dias úteis
 	var err error
@@ -65,14 +66,7 @@ func NovoCalculo(tipo TipoTitulo, vencimento time.Time, liquidacao time.Time, ta
 	return nc
 }
 
-func (calc *Calculo) calcularFluxoPagamento() {
-	calc.DataLiquidacao.Month()
-
-	if calc.Titulo.Tipo == NTN_F {
-		calc.calcularFluxoPagamentoNTN_F()
-	}
-}
-
+// Identifica o próximo fluxo de pagamentos para os papeis com pagamento de cupom (NTN-B e NTN-F)
 func (calc *Calculo) calcularPrimeiroCupom() {
 	var primeiroCupom time.Time
 
@@ -99,36 +93,17 @@ func (calc *Calculo) calcularPrimeiroCupom() {
 	calc.primeiroCupom = primeiroCupom
 }
 
-func (calc *Calculo) calcularFluxoPagamentoNTN_F() {
+// calcula o fluxo de pagamentos de cupom
+func (calc *Calculo) calcularFluxoPagamento() {
 	cupomAtual := calc.primeiroCupom
 
 	for cupomAtual.Before(calc.Titulo.Vencimento) {
-		du, _ := diaTrabalhoTotal(calc.DataLiquidacao, cupomAtual)
-		vf := arred(calc.Titulo.valorFace*calc.Titulo.Cupom, 5)
-		vp := valorPresente(vf, calc.Taxa, du)
-
-		fp := fluxoPagamento{
-			dataPagamento: cupomAtual,
-			du:            du,
-			pagamento:     vf,
-			valorPresente: vp,
-		}
-
-		calc.fluxoPagamento = append(calc.fluxoPagamento, fp)
+		calc.adicionarFluxoPagamento(cupomAtual, false)
 		cupomAtual = cupomAtual.AddDate(0, 6, 0)
 	}
 
-	du, _ := diaTrabalhoTotal(calc.DataLiquidacao, cupomAtual)
-	vf := arred(calc.Titulo.valorFace*(1+calc.Titulo.Cupom), 5)
-	vp := valorPresente(vf, calc.Taxa, du)
-
-	fp := fluxoPagamento{
-		dataPagamento: cupomAtual,
-		du:            du,
-		pagamento:     vf,
-		valorPresente: vp,
-	}
-	calc.fluxoPagamento = append(calc.fluxoPagamento, fp)
+	//ao final adiciona o último fluxo definindo o parâmetro m (maturado) como true para que possa ter o pagamentod o valor de face alem do cupom
+	calc.adicionarFluxoPagamento(cupomAtual, true)
 
 	for _, fp := range calc.fluxoPagamento {
 		fmt.Println(fp.dataPagamento, "\t", fp.du, "\t", fp.pagamento, "\t", fp.valorPresente)
@@ -137,16 +112,35 @@ func (calc *Calculo) calcularFluxoPagamentoNTN_F() {
 	fmt.Println("PU: ", calc.Preco)
 }
 
-func (calc *Calculo) PrecificarLTN() {
-	calc.Preco = valorPresente(1000.00, calc.Taxa, calc.DU)
+// função auxiliar para adicionar um fluxo de pagamentos para o conjunto
+func (calc *Calculo) adicionarFluxoPagamento(dp time.Time, m bool) {
+	var c float64
+	if m == false {
+		c = calc.Titulo.Cupom
+	} else {
+		c = calc.Titulo.Cupom + 1
+	}
+	du, _ := diaTrabalhoTotal(calc.DataLiquidacao, dp)
+	vf := arred(calc.Titulo.valorFace*c, 5)
+	vp := valorPresente(vf, calc.Taxa, du)
+
+	fp := fluxoPagamento{
+		dataPagamento: dp,
+		du:            du,
+		pagamento:     vf,
+		valorPresente: vp,
+	}
+
+	calc.fluxoPagamento = append(calc.fluxoPagamento, fp)
 }
 
-func valorPresente(valorFace float64, taxa float64, du int) float64 {
-	return truncar(valorFace/math.Pow(1+taxa, truncar(float64(du)/252, 14)), 6)
+func (calc *Calculo) PrecificarLTN() {
+	calc.Preco = valorPresente(calc.Titulo.valorFace, calc.Taxa, calc.DU)
 }
 
 // define o percentual do cupom ajustado para pagamentos semestrais, de acordo com o tipo de título
-func (calc *Calculo) definirCupom() {
+// como as taxas são anuais e os juros são compostos, é necessário elevar a taxa a 1/2 (0,5) para ajustar o cupom para uma periodicidade semestral
+func (calc *Calculo) definirParametros() {
 	ajusteSemestral := 0.5
 	if calc.Titulo.Tipo == NTN_F {
 		calc.Titulo.Cupom = math.Pow(1.10, ajusteSemestral) - 1
@@ -155,14 +149,20 @@ func (calc *Calculo) definirCupom() {
 		calc.Titulo.Cupom = math.Pow(1.06, ajusteSemestral) - 1
 		calc.Titulo.valorFace = 100.00
 	}
-
 }
 
+// função auxiliar para definir o valor presente de um pagamento a uma determinada taxa utilizando uma base de dias uteis/252
+func valorPresente(valorFace float64, taxa float64, du int) float64 {
+	return truncar(valorFace/math.Pow(1+taxa, truncar(float64(du)/252, 14)), 6)
+}
+
+// função auxiliar para permitir truncar em X casas decimais um número qualquer
 func truncar(value float64, decimalPlaces int) float64 {
 	shift := math.Pow(10, float64(decimalPlaces))
 	return math.Trunc(value*shift) / shift
 }
 
+// função auxiliar para permitir arredondar em X casas decimais um número qualquer
 func arred(value float64, decimalPlaces int) float64 {
 	shift := math.Pow(10, float64(decimalPlaces))
 	return math.Round(value*shift) / shift
